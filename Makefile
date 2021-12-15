@@ -1,54 +1,26 @@
-export VERSION ?= $(shell ./version.sh)
+MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+CURRENT_DIR := $(realpath $(patsubst %/,%,$(dir $(MKFILE_PATH))))
+ROOT_DIR := $(realpath $(CURRENT_DIR)/..)
+
+export VERSION ?= $(shell $(CURRENT_DIR)/version.sh)
 NAME := bandwagon
 PACKAGE := gravitational.io/$(NAME):$(VERSION)
 PACKAGE_FILENAME := $(NAME)-$(VERSION).tar.gz
 OPS_URL ?= https://opscenter.localhost.localdomain:33009
-GRAVITY ?= gravity
 
-CURRENT_DIR := $(shell pwd)
-BUILD_DIR := $(CURRENT_DIR)/build
+GRAVITY ?= gravity
+DOCKER ?= docker
+GO ?= go
+
+BUILD_DIR_CONTAINER := _build
+BUILD_DIR := $(CURRENT_DIR)/_build
 WEB_APP_DIR := $(CURRENT_DIR)/web
 
-BUILDBOX_IMAGE := quay.io/gravitational/debian-venti:go1.14.13-buster
-BUILDBOX_DIR := /gopath/src/github.com/gravitational/$(NAME)
-
+BUILDBOX_IMAGE ?= quay.io/gravitational/debian-venti:go1.14.13-buster
+BUILDBOX_DIR ?= /gopath/src/github.com/gravitational
 
 .PHONY: all
-all: build
-
-
-.PHONY: build
-build: web-build go-build hook-build
-	docker build -t $(NAME):$(VERSION) .
-
-
-.PHONY: hook-build
-hook-build:
-	$(MAKE) -C images hook
-
-
-.PHONY: push
-push:
-	docker tag $(NAME):$(VERSION) apiserver:5000/$(NAME):$(VERSION) && \
-		docker push apiserver:5000/$(NAME):$(VERSION)
-
-
-.PHONY: run
-run: build
-	docker run -p 8000:8000 $(NAME):$(VERSION)
-
-
-#
-# The 'app' target builds bandwagon package in the current directory, for example:
-#
-#   $ VERSION=1.2.0 make app
-#
-# will produce 'bandwagon-1.2.0.tar.gz'.
-#
-.PHONY: app
-app:
-	./app.sh $(PACKAGE) $(PACKAGE_FILENAME)
-
+all: import
 
 .PHONY: import
 import: build
@@ -57,25 +29,26 @@ import: build
 		--version=$(VERSION) --set-image=$(NAME):$(VERSION) \
 		--set-image=bandwagon-hook:$(VERSION)
 
+.PHONY: build
+build: web-build go-build hook-build
+	@docker build -t $(NAME):$(VERSION) .
 
 .PHONY: web-build
 web-build:
 	$(MAKE) -C $(WEB_APP_DIR) docker-build
 
-
 .PHONY: go-build
-go-build:
-	mkdir -p build
-	docker run -i --rm=true -v $(CURRENT_DIR):$(BUILDBOX_DIR) \
-		$(BUILDBOX_IMAGE) /bin/bash -c "make -C $(BUILDBOX_DIR) go-build-in-buildbox"
+go-build: | $(BUILD_DIR)
+	@docker run -i --rm=true -v $(ROOT_DIR):$(BUILDBOX_DIR) \
+		$(BUILDBOX_IMAGE) /bin/bash -c "make -C $(BUILDBOX_DIR)/bandwagon go-build-in-buildbox"
 
+.PHONY: hook-build
+hook-build:
+	$(MAKE) -C images hook
 
 .PHONY: go-build-in-buildbox
 go-build-in-buildbox:
-	cd $(BUILDBOX_DIR) && \
-		go build -o ./build/$(NAME)
+	@go build -mod=vendor -o $(BUILD_DIR_CONTAINER)/$(NAME)
 
-
-.PHONY: clean
-clean:
-	rm -rf build
+$(BUILD_DIR):
+	@mkdir -p $@
